@@ -1,5 +1,5 @@
 id: d2a79984-a0ce-4871-b65d-8588472a1b20
-name: aws-architecture-diagram
+name: '@adernley/aws-disco/diagram'
 description: >-
   Inventory every compute and network object in an AWS region and render an
   animated D3 architecture diagram. Run weekly and share the HTML with the team.

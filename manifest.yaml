@@ -31,6 +31,8 @@ models:
 # does not recurse, so a nested path like legal/LICENSE.txt would score zero.
 # `.txt` because additionalFiles rejects extensionless files; this is the same
 # LICENSE.txt convention the official @swamp/aws extensions ship.
+workflows:
+  - workflow-aws-architecture-diagram.yaml
 additionalFiles:
   - LICENSE.txt
   - README.md

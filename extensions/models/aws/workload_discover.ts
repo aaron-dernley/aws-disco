@@ -50,7 +50,9 @@ const CHILD_TYPES = [
  * ECS services are scoped to a cluster and EKS nodegroups to a cluster name, so
  * both need the parent identifier threaded through `ResourceModel`.
  */
-function expandClusterChildren(found: DiscoveredResource[]): ListTarget[] {
+export function expandClusterChildren(
+  found: DiscoveredResource[],
+): ListTarget[] {
   const targets: ListTarget[] = [];
 
   for (const resource of found) {

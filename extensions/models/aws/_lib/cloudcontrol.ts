@@ -44,6 +44,14 @@ export interface DiscoveryResult {
   resources: DiscoveredResource[];
   errors: DiscoveryError[];
   counts: Record<string, number>;
+  /** Types that hit the pagination ceiling, so their listing is incomplete. */
+  truncatedTypes: string[];
+}
+
+/** Outcome of listing one type: the resources, and whether we saw all of them. */
+export interface ListOutcome {
+  resources: DiscoveredResource[];
+  truncated: boolean;
 }
 
 /**
@@ -196,9 +204,10 @@ async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
 export async function listResources(
   client: CloudControlClient,
   target: ListTarget,
-): Promise<DiscoveredResource[]> {
+): Promise<ListOutcome> {
   const found: DiscoveredResource[] = [];
   let nextToken: string | undefined = undefined;
+  let truncated = false;
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const response = await withRetry(() =>
@@ -234,9 +243,12 @@ export async function listResources(
 
     nextToken = response.NextToken;
     if (!nextToken) break;
+    // Still more pages when the page budget runs out: say so rather than
+    // returning a partial list that looks complete.
+    if (page === MAX_PAGES - 1) truncated = true;
   }
 
-  return found;
+  return { resources: found, truncated };
 }
 
 /** Logger surface used by discovery, satisfied by `context.logger`. */
@@ -261,14 +273,19 @@ export async function discoverTypes(
   const resources: DiscoveredResource[] = [];
   const errors: DiscoveryError[] = [];
   const counts: Record<string, number> = {};
+  const truncatedTypes: string[] = [];
 
   for (const target of targets) {
     try {
-      const found = await listResources(client, target);
-      resources.push(...found);
-      counts[target.typeName] = (counts[target.typeName] ?? 0) + found.length;
+      const outcome = await listResources(client, target);
+      resources.push(...outcome.resources);
+      counts[target.typeName] = (counts[target.typeName] ?? 0) +
+        outcome.resources.length;
+      if (outcome.truncated && !truncatedTypes.includes(target.typeName)) {
+        truncatedTypes.push(target.typeName);
+      }
       logger?.info("Discovered {count} of {type}", {
-        count: found.length,
+        count: outcome.resources.length,
         type: target.typeName,
       });
     } catch (error) {
@@ -292,7 +309,7 @@ export async function discoverTypes(
     }
   }
 
-  return { resources, errors, counts };
+  return { resources, errors, counts, truncatedTypes };
 }
 
 const HYDRATE_CONCURRENCY = 4;

@@ -90,7 +90,7 @@ const ROUTING_TYPES = [
  * Network ACL entries are deliberately not expanded: CloudControl has no LIST
  * handler for `AWS::EC2::NetworkAclEntry`, so asking only produces noise.
  */
-function expandRouting(found: DiscoveredResource[]): ListTarget[] {
+export function expandRouting(found: DiscoveredResource[]): ListTarget[] {
   const targets: ListTarget[] = [];
 
   for (const resource of found) {

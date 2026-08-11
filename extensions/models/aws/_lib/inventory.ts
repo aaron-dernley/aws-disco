@@ -38,6 +38,12 @@ export const InventorySchema = z.object({
   ).describe("Every discovered resource with its CloudControl properties."),
   errors: z.array(z.object({ type: z.string(), message: z.string() }))
     .describe("Types that could not be listed, with the reason."),
+  truncated: z.boolean().describe(
+    "True when any type hit the pagination ceiling, so this inventory is incomplete.",
+  ),
+  truncatedTypes: z.array(z.string()).describe(
+    "The types whose listing was cut short by the pagination ceiling.",
+  ),
 });
 
 /** Inventory payload produced by a discovery run. */
@@ -101,7 +107,12 @@ export async function runDiscovery(
 
   logger?.info("Discovering {domain} in {region}", { domain, region });
 
-  const combined: DiscoveryResult = { resources: [], errors: [], counts: {} };
+  const combined: DiscoveryResult = {
+    resources: [],
+    errors: [],
+    counts: {},
+    truncatedTypes: [],
+  };
   // Parent-scoped listings overlap heavily — asking each of 47 route tables for
   // its subnet associations returns the VPC's whole association set every time.
   // Keying on type + identifier keeps the first copy and drops the rest, so
@@ -137,6 +148,11 @@ export async function runDiscovery(
     const result = await discoverTypes(client, targets, logger);
     absorb(result.resources);
     combined.errors.push(...result.errors);
+    for (const typeName of result.truncatedTypes) {
+      if (!combined.truncatedTypes.includes(typeName)) {
+        combined.truncatedTypes.push(typeName);
+      }
+    }
     for (const typeName of Object.keys(result.counts)) {
       combined.counts[typeName] = combined.counts[typeName] ?? 0;
     }
@@ -154,6 +170,8 @@ export async function runDiscovery(
     counts: combined.counts,
     resources: combined.resources,
     errors: combined.errors,
+    truncated: combined.truncatedTypes.length > 0,
+    truncatedTypes: combined.truncatedTypes,
   };
 
   logger?.info("Discovered {count} {domain} resources in {region}", {

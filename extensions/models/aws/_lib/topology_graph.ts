@@ -23,6 +23,8 @@ export interface RawInventory {
   resources?: RawResource[];
   counts?: Record<string, number>;
   errors?: { type: string; message: string }[];
+  truncated?: boolean;
+  truncatedTypes?: string[];
 }
 
 /** A drawn box: compute, gateway, balancer or external actor. */
@@ -915,6 +917,13 @@ export function buildGraph(
     }
   }
   for (const inventory of present) {
+    // A capped listing is worse than a failed one — it looks complete. Say it
+    // on the diagram itself rather than leaving a silent hole in the topology.
+    for (const typeName of inventory.truncatedTypes ?? []) {
+      const note =
+        `${typeName} hit the pagination ceiling — some resources are missing from this diagram.`;
+      if (!warnings.includes(note)) warnings.push(note);
+    }
     for (const error of inventory.errors ?? []) {
       // Per-resource hydration failures are keyed `Type/identifier` and are too
       // granular to surface; only whole types that couldn't be listed matter.

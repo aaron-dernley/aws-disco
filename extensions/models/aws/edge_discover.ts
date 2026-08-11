@@ -26,7 +26,7 @@ const EDGE_TYPES = [
  * Listeners are only listable per load balancer, so fan out over what the first
  * phase found.
  */
-function expandListeners(found: DiscoveredResource[]): ListTarget[] {
+export function expandListeners(found: DiscoveredResource[]): ListTarget[] {
   const targets: ListTarget[] = [];
   for (const resource of found) {
     if (resource.type !== "AWS::ElasticLoadBalancingV2::LoadBalancer") continue;

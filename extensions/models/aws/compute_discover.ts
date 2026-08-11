@@ -15,7 +15,7 @@ import {
   runDiscovery,
 } from "./_lib/inventory.ts";
 
-const COMPUTE_TYPES = [
+export const COMPUTE_TYPES = [
   "AWS::EC2::Instance",
   "AWS::AutoScaling::AutoScalingGroup",
   "AWS::EC2::LaunchTemplate",
