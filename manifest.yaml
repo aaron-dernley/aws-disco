@@ -1,6 +1,7 @@
 manifestVersion: 1
 name: '@adernley/aws-disco'
 version: 2026.08.11.1
+repository: https://github.com/aaron-dernley/aws-disco
 description: >-
   Region-wide AWS topology discovery and an animated D3 architecture diagram.
   Adds a fan-out `discover` method to the official @swamp/aws EC2, ECS and ELBv2
