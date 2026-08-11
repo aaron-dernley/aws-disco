@@ -1,0 +1,8 @@
+type: '@swamp/aws/ec2/vpc'
+typeVersion: 2026.07.17.1
+id: 01fd3c32-bb01-4ff2-b577-d253d799be22
+name: aws-network
+version: 1
+tags: {}
+globalArguments: {}
+methods: {}

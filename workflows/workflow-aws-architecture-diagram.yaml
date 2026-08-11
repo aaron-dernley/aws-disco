@@ -1,0 +1,139 @@
+id: d2a79984-a0ce-4871-b65d-8588472a1b20
+name: aws-architecture-diagram
+description: >-
+  Inventory every compute and network object in an AWS region and render an
+  animated D3 architecture diagram. Run weekly and share the HTML with the team.
+  Pass --input region=<region> to target a region other than eu-west-2.
+tags:
+  cadence: weekly
+  owner: platform
+# Every Monday at 06:00. The schedule pins the default region; run the workflow
+# by hand with --input region=<other> to produce a diagram for anywhere else.
+trigger:
+  schedule: "0 6 * * 1"
+  inputs:
+    region: eu-west-2
+inputs:
+  type: object
+  properties:
+    region:
+      type: string
+      description: AWS region to inventory and diagram.
+      default: eu-west-2
+jobs:
+  # The four discovery domains are independent and hit different models, so they
+  # hold different locks and can run concurrently. Each is a single fan-out call
+  # that inventories its whole domain rather than one call per resource.
+  - name: discover
+    description: Inventory the region's network, compute, workloads and edge
+    concurrency: 4
+    dependsOn: []
+    weight: 0
+    steps:
+      - name: network
+        description: VPCs, subnets, route tables, gateways, endpoints and filters
+        task:
+          type: model_method
+          modelIdOrName: aws-network
+          methodName: discover
+          inputs:
+            region: ${{ inputs.region }}
+        dependsOn: []
+        weight: 0
+        # A domain that fails shouldn't cost the whole diagram; the renderer
+        # records the gap and draws what it has.
+        allowFailure: true
+      - name: compute
+        description: EC2 instances, auto scaling groups and launch templates
+        task:
+          type: model_method
+          modelIdOrName: aws-compute
+          methodName: discover
+          inputs:
+            region: ${{ inputs.region }}
+        dependsOn: []
+        weight: 0
+        allowFailure: true
+      - name: workloads
+        description: ECS clusters and services, EKS clusters, Lambda functions
+        task:
+          type: model_method
+          modelIdOrName: aws-workloads
+          methodName: discover
+          inputs:
+            region: ${{ inputs.region }}
+        dependsOn: []
+        weight: 0
+        allowFailure: true
+      - name: edge
+        description: Load balancers, listeners and target groups
+        task:
+          type: model_method
+          modelIdOrName: aws-edge
+          methodName: discover
+          inputs:
+            region: ${{ inputs.region }}
+        dependsOn: []
+        weight: 0
+        allowFailure: true
+
+  - name: render
+    description: Build the animated D3 topology diagram from the inventories
+    # `completed`, not `succeeded`: discovery steps tolerate failure, and the
+    # render is still worth doing from whichever domains did come back. The
+    # assert step below is what actually fails the run if nothing did.
+    dependsOn:
+      - job: discover
+        condition:
+          type: completed
+    weight: 1
+    steps:
+      - name: diagram
+        description: Render the standalone HTML diagram
+        task:
+          type: model_method
+          modelIdOrName: aws-diagram
+          methodName: render
+          inputs:
+            region: ${{ inputs.region }}
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+      - name: verify
+        description: Fail the run if the diagram came out empty
+        task:
+          type: assert
+          expr: >-
+            int(data.latest("aws-diagram", "summary").attributes.nodeCount) > 0
+          message: >-
+            The diagram rendered no objects — discovery probably failed for every
+            domain. Check AWS credentials and the discover step logs.
+          severity: high
+        dependsOn:
+          - step: diagram
+            condition:
+              type: succeeded
+        weight: 1
+        allowFailure: false
+      - name: freshness
+        description: Fail the run if any domain served stale data
+        # Discovery output survives between runs, so a failed discover step
+        # renders happily from the previous week. The diagram is still produced
+        # and flagged, but the run must go red — otherwise stale architecture
+        # gets circulated as current.
+        task:
+          type: assert
+          expr: >-
+            size(data.latest("aws-diagram", "summary").attributes.staleDomains) == 0
+          message: >-
+            One or more domains did not refresh this run, so the diagram mixes
+            current and stale data. Check the discover step logs — most often
+            expired AWS credentials.
+          severity: high
+        dependsOn:
+          - step: diagram
+            condition:
+              type: succeeded
+        weight: 2
+        allowFailure: false
+version: 1

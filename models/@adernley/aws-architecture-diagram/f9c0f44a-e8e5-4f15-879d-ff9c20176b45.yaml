@@ -1,0 +1,22 @@
+type: '@adernley/aws-architecture-diagram'
+typeVersion: 2026.08.10.1
+id: f9c0f44a-e8e5-4f15-879d-ff9c20176b45
+name: aws-diagram
+version: 1
+tags: {}
+globalArguments:
+  region: eu-west-2
+  inlineD3: true
+  # A weekly run should only ever draw data gathered minutes earlier; anything
+  # older means a discover step failed and the diagram must say so.
+  maxInventoryAgeMinutes: 360
+  publishDir: diagrams
+  # Each discovery model writes a single `inventory` resource; pull the latest
+  # version of each straight out of the data model rather than re-fetching.
+  # Optional chaining keeps a domain that has never run (or failed this week)
+  # from taking the whole diagram down — the renderer notes the gap instead.
+  network: ${{ data.latest("aws-network", "inventory").?attributes }}
+  compute: ${{ data.latest("aws-compute", "inventory").?attributes }}
+  workloads: ${{ data.latest("aws-workloads", "inventory").?attributes }}
+  edge: ${{ data.latest("aws-edge", "inventory").?attributes }}
+methods: {}

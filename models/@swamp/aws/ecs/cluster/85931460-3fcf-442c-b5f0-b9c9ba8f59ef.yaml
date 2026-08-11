@@ -1,0 +1,8 @@
+type: '@swamp/aws/ecs/cluster'
+typeVersion: 2026.06.15.1
+id: 85931460-3fcf-442c-b5f0-b9c9ba8f59ef
+name: aws-workloads
+version: 1
+tags: {}
+globalArguments: {}
+methods: {}

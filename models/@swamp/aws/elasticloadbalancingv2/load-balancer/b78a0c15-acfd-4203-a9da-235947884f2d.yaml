@@ -1,0 +1,8 @@
+type: '@swamp/aws/elasticloadbalancingv2/load-balancer'
+typeVersion: 2026.06.15.1
+id: b78a0c15-acfd-4203-a9da-235947884f2d
+name: aws-edge
+version: 1
+tags: {}
+globalArguments: {}
+methods: {}

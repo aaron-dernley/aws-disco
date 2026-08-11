@@ -1,0 +1,36 @@
+manifestVersion: 1
+name: '@adernley/aws-disco'
+version: 2026.08.11.1
+description: >-
+  Region-wide AWS topology discovery and an animated D3 architecture diagram.
+  Adds a fan-out `discover` method to the official @swamp/aws EC2, ECS and ELBv2
+  model types, then renders every compute object and every inbound and outbound
+  network route into a single self-contained HTML file.
+labels:
+  - aws
+  - architecture
+  - diagram
+  - topology
+  - networking
+# The discovery files extend types owned by these extensions, so they must be
+# installed before this one can load.
+dependencies:
+  - '@swamp/aws/ec2'
+  - '@swamp/aws/ecs'
+  - '@swamp/aws/elasticloadbalancingv2'
+# The aws/_lib/* helpers are deliberately absent: they carry no `export const
+# model`/`extension`, and the bundler follows the relative imports for them —
+# the official @swamp/aws extensions declare their own _lib the same way.
+models:
+  - aws/network_discover.ts
+  - aws/compute_discover.ts
+  - aws/workload_discover.ts
+  - aws/edge_discover.ts
+  - aws/architecture_diagram.ts
+# Bare basenames only — the scorer looks for a licence at the archive root and
+# does not recurse, so a nested path like legal/LICENSE.txt would score zero.
+# `.txt` because additionalFiles rejects extensionless files; this is the same
+# LICENSE.txt convention the official @swamp/aws extensions ship.
+additionalFiles:
+  - LICENSE.txt
+  - README.md

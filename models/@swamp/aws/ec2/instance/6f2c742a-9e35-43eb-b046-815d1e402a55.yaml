@@ -1,0 +1,8 @@
+type: '@swamp/aws/ec2/instance'
+typeVersion: 2026.06.15.1
+id: 6f2c742a-9e35-43eb-b046-815d1e402a55
+name: aws-compute
+version: 1
+tags: {}
+globalArguments: {}
+methods: {}
