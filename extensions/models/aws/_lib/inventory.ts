@@ -49,13 +49,21 @@ export const InventorySchema = z.object({
 /** Inventory payload produced by a discovery run. */
 export type Inventory = z.infer<typeof InventorySchema>;
 
-/** Resource spec merged into each extended AWS model type. */
+/**
+ * Resource spec merged into each extended AWS model type.
+ *
+ * A network inventory for a mid-sized region is tens of megabytes, and only the
+ * newest version is ever read — the renderer always takes `data.latest`. Keeping
+ * every version forever would grow the datastore without bound for no benefit,
+ * so retention is capped at six runs and ninety days. That still leaves roughly
+ * six weeks of history to diff a Monday against, on the intended weekly cadence.
+ */
 export const inventoryResourceSpec = {
   description:
     "Region-wide inventory of this domain, used to build the architecture diagram",
   schema: InventorySchema,
-  lifetime: "infinite" as const,
-  garbageCollection: 12,
+  lifetime: "90d" as const,
+  garbageCollection: 6,
 };
 
 /** Arguments accepted by every `discover` method. */

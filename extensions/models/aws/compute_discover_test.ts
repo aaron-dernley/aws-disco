@@ -15,10 +15,15 @@ Deno.test("covers the instances and the things that create them", () => {
   ]);
 });
 
-Deno.test("declares the inventory resource the diagram reads", () => {
+Deno.test("inventory retention is bounded — these payloads are tens of megabytes", () => {
+  // Only the newest version is ever read, so unbounded retention would grow the
+  // datastore for no benefit.
   const spec = extension.resources.inventory;
-  assertEquals(spec.lifetime, "infinite");
-  assert(typeof spec.garbageCollection === "number");
+  assertEquals(spec.lifetime, "90d");
+  assert(
+    spec.garbageCollection > 0 && spec.garbageCollection <= 8,
+    `expected a small version cap, got ${spec.garbageCollection}`,
+  );
 });
 
 Deno.test("discover takes an optional region argument", () => {

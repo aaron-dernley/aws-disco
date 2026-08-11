@@ -2,6 +2,8 @@ import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import {
   buildCredentials,
   discoverTypes,
+  hydrateResources,
+  isProgrammerError,
   isTolerableListError,
   listResources,
   resolveRegion,
@@ -164,6 +166,53 @@ Deno.test("permission and capability errors are tolerated, not fatal", () => {
 
   const unsupported = new Error("does not support LIST action");
   assert(isTolerableListError(unsupported));
+});
+
+Deno.test("hydration absorbs an AWS read failure and keeps the listed resource", async () => {
+  const client = stubClient(() => {
+    const error = new Error("User is not authorized to perform this action");
+    error.name = "AccessDeniedException";
+    throw error;
+  });
+  const resources = [{
+    type: "AWS::EC2::VPC",
+    identifier: "vpc-1",
+    properties: { VpcId: "vpc-1" },
+  }];
+
+  const errors = await hydrateResources(client, resources, ["AWS::EC2::VPC"]);
+
+  assertEquals(errors.length, 1);
+  // The resource survives with whatever listing gave us.
+  assertEquals(resources[0].properties, { VpcId: "vpc-1" });
+});
+
+Deno.test("hydration rethrows a bug instead of recording it as a read failure", async () => {
+  // Absorbing this would turn a broken loop into a green run reporting hundreds
+  // of per-resource "errors".
+  const client = stubClient(() => {
+    throw new TypeError("cannot read properties of undefined");
+  });
+  const resources = [{
+    type: "AWS::EC2::VPC",
+    identifier: "vpc-1",
+    properties: {},
+  }];
+
+  await assertRejects(
+    () => hydrateResources(client, resources, ["AWS::EC2::VPC"]),
+    TypeError,
+  );
+});
+
+Deno.test("programmer errors are distinguished from operational ones", () => {
+  assert(isProgrammerError(new TypeError("boom")));
+  assert(isProgrammerError(new ReferenceError("boom")));
+  assert(!isProgrammerError(new Error("Rate exceeded")));
+
+  const denied = new Error("denied");
+  denied.name = "AccessDeniedException";
+  assert(!isProgrammerError(denied));
 });
 
 Deno.test("region resolution prefers the explicit argument", () => {

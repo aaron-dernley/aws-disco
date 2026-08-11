@@ -107,6 +107,23 @@ function isThrottlingError(error: unknown): boolean {
  * inventory these are expected gaps, not failures — the diagram should still
  * render from whatever else was found.
  */
+/**
+ * True for faults in this code rather than in the call to AWS.
+ *
+ * Operational errors are worth absorbing — a resource that can't be read costs
+ * detail on one node. A `TypeError` is a bug, and absorbing it would turn a
+ * broken hydration loop into a run that reports hundreds of per-resource
+ * "errors" and still exits green.
+ */
+export function isProgrammerError(error: unknown): boolean {
+  return (
+    error instanceof TypeError ||
+    error instanceof ReferenceError ||
+    error instanceof SyntaxError ||
+    error instanceof RangeError
+  );
+}
+
 export function isTolerableListError(error: unknown): boolean {
   const msg = errorMessage(error);
   const name = errorName(error);
@@ -385,7 +402,9 @@ export async function hydrateResources(
       } catch (error) {
         // Hydration is enrichment, never the point of failure: the resource is
         // already known from listing, so a read that throttles out or is denied
-        // costs detail on one node rather than the whole weekly diagram.
+        // costs detail on one node rather than the whole weekly diagram. A bug
+        // in this loop is a different matter and must not be absorbed.
+        if (isProgrammerError(error)) throw error;
         errors.push({
           type: `${resource.type}/${resource.identifier}`,
           message: errorMessage(error),
