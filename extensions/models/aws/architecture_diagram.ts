@@ -121,7 +121,7 @@ interface RenderContext {
 
 /** Model that turns AWS discovery output into a shareable diagram. */
 export const model = {
-  type: "@adernley/aws-architecture-diagram",
+  type: "@aaronge/aws-architecture-diagram",
   version: "2026.08.10.1",
   globalArguments: GlobalArgsSchema,
   resources: {

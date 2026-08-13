@@ -325,7 +325,7 @@ Deno.test("an empty region still produces a renderable graph", () => {
 });
 
 Deno.test("the model declares the file and resource outputs the workflow reads", () => {
-  assertEquals(model.type, "@adernley/aws-architecture-diagram");
+  assertEquals(model.type, "@aaronge/aws-architecture-diagram");
   assertEquals(model.files.html.contentType, "text/html");
   assert("summary" in model.resources);
 });
