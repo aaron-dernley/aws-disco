@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: '@aaronge/aws-disco'
-version: 2026.08.21.1
+version: 2026.08.21.5
 repository: https://github.com/aaron-dernley/aws-disco
 description: >-
   Region-wide AWS topology discovery and an animated D3 architecture diagram.

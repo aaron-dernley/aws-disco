@@ -737,18 +737,19 @@ function renderInspect(node) {
     html += '<div class="paths-title">Tags (' + tagKeys.length +
       ") — click to filter</div><div class=\"chips\">";
     tagKeys.forEach(function (key) {
+      const text = key + "=" + nodeTags[key];
       // Keys the rail doesn't offer — Name and friends — are shown but inert:
       // filtering on one leaves a single object and no way to see why.
       if (!facetKeys.has(key)) {
-        html += '<div class="chip inert">' + esc(key) + "=" +
-          esc(nodeTags[key]) + "</div>";
+        html += '<div class="chip inert" title="' + esc(text) + '">' +
+          esc(text) + "</div>";
         return;
       }
       const chosen = state.tags.get(key);
       const on = !!(chosen && chosen.has(nodeTags[key]));
       html += '<div class="chip' + (on ? " active" : "") + '" data-tagkey="' +
-        esc(key) + '" data-tagval="' + esc(nodeTags[key]) + '">' +
-        esc(key) + "=" + esc(nodeTags[key]) + "</div>";
+        esc(key) + '" data-tagval="' + esc(nodeTags[key]) + '" title="' +
+        esc(text) + '">' + esc(text) + "</div>";
     });
     html += "</div>";
   }
@@ -941,10 +942,14 @@ function afterTagChange() {
   fitVisible(true);
 }
 
+// The rail is 232px wide and tag values are routinely longer than that, so the
+// full text goes on a title — otherwise a row of identically-truncated values
+// is indistinguishable.
 function tagCheck(key, value, label, count, on, extra) {
   return '<div class="check ' + (on ? "on" : "off") + (extra || "") +
     '" data-tagkey="' + esc(key) + '" data-tagval="' + esc(value) + '">' +
-    '<span class="box"></span><span class="val">' + esc(label) + "</span>" +
+    '<span class="box"></span><span class="val" title="' + esc(label) + '">' +
+    esc(label) + "</span>" +
     '<span class="count">' + count + "</span></div>";
 }
 
@@ -954,9 +959,10 @@ function renderActiveChips() {
   const pairs = activeTagPairs();
   if (!pairs.length) { host.innerHTML = ""; return; }
   host.innerHTML = '<div class="chips">' + pairs.map(function (p) {
+    const text = p[0] + "=" + (p[1] === UNTAGGED ? "untagged" : p[1]);
     return '<div class="chip active" data-tagkey="' + esc(p[0]) +
-      '" data-tagval="' + esc(p[1]) + '">' + esc(p[0]) + "=" +
-      esc(p[1] === UNTAGGED ? "untagged" : p[1]) + "</div>";
+      '" data-tagval="' + esc(p[1]) + '" title="' + esc(text) + '">' +
+      esc(text) + "</div>";
   }).join("") + "</div>";
   bindTagToggles(host);
 }
@@ -1044,8 +1050,12 @@ function mountTagRail() {
     return;
   }
 
+  // Tag keys are identifiers, not prose: spellcheck underlines every one of
+  // them and a phone would capitalise the first letter of a case-sensitive key.
   host.innerHTML =
-    '<input class="tagsearch" id="tagsearch" placeholder="search keys and values">' +
+    '<input class="tagsearch" id="tagsearch" spellcheck="false" ' +
+    'autocomplete="off" autocapitalize="off" autocorrect="off" ' +
+    'placeholder="search keys and values">' +
     '<div class="btnrow"><button class="btn" data-tagclear="1">Clear</button>' +
     '<button class="btn" data-tagfit="1">Fit view</button></div>' +
     '<div id="tagactive"></div><div id="taglist"></div>';
@@ -1130,6 +1140,18 @@ renderInspect(null);
 fit();
 animate();
 window.addEventListener("resize", fit);
+
+// Escape backs out of whatever is narrowing the view. Unpinning otherwise means
+// finding a patch of blank canvas to click, which a dense region doesn't have.
+window.addEventListener("keydown", function (event) {
+  if (event.key !== "Escape") return;
+  const search = document.getElementById("tagsearch");
+  if (search && document.activeElement === search && search.value !== "") {
+    search.value = ""; tagQuery = ""; renderTagList();
+    return;
+  }
+  if (state.pinned) { state.pinned = null; apply(); renderInspect(null); }
+});
 `;
 
 /** Render the complete standalone HTML document for a topology graph. */

@@ -30,8 +30,9 @@ Each tile leads with what the object is — `EC2 INSTANCE`, `NLB`, `VPC ENDPOINT
 other property live in the inspect pane, one click away.
 
 Interactions: drag nodes, scroll to zoom, click any object to pin it and see
-every path in and out. Amber dashes are traffic that crosses the internet; cyan
-dots stay inside AWS. Particles animate along each path in the direction of
+every path in and out. `Esc` unpins — handy in a dense region where there is no
+blank canvas left to click. Amber dashes are traffic that crosses the internet;
+cyan dots stay inside AWS. Particles animate along each path in the direction of
 travel.
 
 ### Filtering
@@ -55,6 +56,10 @@ so a screenshot says what it shows.
 
 The tags on a pinned object double as controls: click one to filter the whole
 diagram to everything sharing it.
+
+The rail is narrower than most tag values, so anything truncated carries the
+full `key=value` on hover. The search box above the keys matches on both keys
+and values; `Esc` clears it while it has focus.
 
 ## How it is built
 
