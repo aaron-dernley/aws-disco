@@ -30,12 +30,22 @@ export interface RawInventory {
 /** A drawn box: compute, gateway, balancer or external actor. */
 export interface GraphNode {
   id: string;
+  /** What kind of thing this is — the bold first line of the drawn tile. */
+  kind: string;
   label: string;
   sub: string;
   category: string;
   group: string;
   vpc?: string;
   detail: [string, string][];
+  /** Resource tags, normalised to a flat map, used by the tag filter. */
+  tags: Record<string, string>;
+  /**
+   * Exempt from tag filtering. The internet and PrivateLink actors are drawn by
+   * this renderer rather than discovered, so they carry no tags — filtering them
+   * out would sever the inbound path of every environment they front.
+   */
+  alwaysVisible?: boolean;
 }
 
 /** A drawn line between two nodes. */
@@ -46,6 +56,14 @@ export interface GraphLink {
   pathType: string;
   scope: "public" | "private";
   label: string;
+}
+
+/** One tag key and the values it takes across the estate, for the filter rail. */
+export interface TagFacet {
+  key: string;
+  /** How many nodes carry this key. */
+  taggedCount: number;
+  values: { value: string; count: number }[];
 }
 
 /** A boundary box that contains nodes. */
@@ -78,6 +96,8 @@ export interface TopologyGraph {
   links: GraphLink[];
   categories: { key: string; label: string; colour: string }[];
   pathTypes: { key: string; label: string; scope: string }[];
+  /** Tag keys worth filtering on, most useful first. */
+  tagFacets: TagFacet[];
 }
 
 /** Node categories, in left-rail display order. */
@@ -139,6 +159,138 @@ function strings(props: Props, key: string): string[] {
   return arr(props, key).filter((v): v is string => typeof v === "string");
 }
 
+/**
+ * Tag keys that name a single resource rather than describe a slice of the
+ * estate. Offering them as filters is noise: every value matches one object.
+ */
+const UNFILTERABLE_TAG_KEYS = new Set([
+  "Name",
+  "aws:cloudformation:logical-id",
+  "aws:cloudformation:stack-id",
+  "aws:ecs:serviceName",
+  "aws:autoscaling:groupName",
+  "eks:nodegroup-name",
+]);
+
+/**
+ * Tag keys that carve the estate into the slices people actually ask for, in
+ * the order they should appear. Matched loosely because naming conventions
+ * differ per account — `Environment`, `env`, `tf_environment` all count.
+ */
+const TAG_KEY_PRIORITY: RegExp[] = [
+  /env/i,
+  /stage/i,
+  /service/i,
+  /\bapp/i,
+  /component/i,
+  /workload/i,
+  /product/i,
+  /project/i,
+  /team/i,
+  /owner/i,
+  /tier/i,
+  /stack/i,
+  /role/i,
+];
+
+/**
+ * Normalise a resource's tags into a flat map.
+ *
+ * CloudControl is not consistent about tag shape: EC2 and ELBv2 return
+ * `[{Key, Value}]`, Lambda and EKS return a plain `{key: value}` object, and a
+ * few services lowercase the entry keys. All three are accepted so a tag filter
+ * doesn't silently miss whole resource types.
+ */
+export function collectTags(props: Props): Record<string, string> {
+  const tags: Record<string, string> = {};
+  const raw = props.Tags ?? props.tags;
+  // `__proto__` is a legal AWS tag key and assigning it would either be
+  // swallowed or reshape the object. Drop it deliberately instead.
+  const usable = (key: string): boolean => key !== "__proto__";
+
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue;
+      const item = entry as Props;
+      const key = typeof item.Key === "string"
+        ? item.Key
+        : typeof item.key === "string"
+        ? item.key
+        : undefined;
+      const value = typeof item.Value === "string"
+        ? item.Value
+        : typeof item.value === "string"
+        ? item.value
+        : undefined;
+      // An empty value is legal in AWS but useless as a filter.
+      if (key && value && usable(key)) tags[key] = value;
+    }
+    return tags;
+  }
+
+  if (raw && typeof raw === "object") {
+    for (const [key, value] of Object.entries(raw as Props)) {
+      if (typeof value === "string" && value && usable(key)) tags[key] = value;
+    }
+  }
+  return tags;
+}
+
+/**
+ * Summarise the tags across every node into the facets the filter rail offers.
+ *
+ * Keys whose values are all distinct are dropped: a key that never repeats
+ * identifies resources instead of grouping them, so filtering on it can only
+ * ever leave one object on the canvas.
+ */
+export function buildTagFacets(nodes: GraphNode[]): TagFacet[] {
+  const byKey = new Map<string, Map<string, number>>();
+  for (const node of nodes) {
+    for (const [key, value] of Object.entries(node.tags)) {
+      let values = byKey.get(key);
+      if (!values) {
+        values = new Map();
+        byKey.set(key, values);
+      }
+      values.set(value, (values.get(value) ?? 0) + 1);
+    }
+  }
+
+  const facets: TagFacet[] = [];
+  for (const [key, values] of byKey) {
+    if (UNFILTERABLE_TAG_KEYS.has(key)) continue;
+    let taggedCount = 0;
+    for (const count of values.values()) taggedCount += count;
+    // Tolerate a couple of one-offs before writing a key off as an identifier;
+    // a small estate can legitimately have one resource per environment.
+    if (values.size === taggedCount && taggedCount > 4) continue;
+    facets.push({
+      key,
+      taggedCount,
+      values: [...values.entries()]
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
+    });
+  }
+
+  const rank = (key: string): number => {
+    const index = TAG_KEY_PRIORITY.findIndex((pattern) => pattern.test(key));
+    return index === -1 ? TAG_KEY_PRIORITY.length : index;
+  };
+  return facets.sort((a, b) =>
+    rank(a.key) - rank(b.key) ||
+    b.taggedCount - a.taggedCount ||
+    a.key.localeCompare(b.key)
+  );
+}
+
+/** The short name people use for each flavour of ELBv2. */
+function lbKind(type: string | undefined): string {
+  if (type === "network") return "NLB";
+  if (type === "gateway") return "Gateway LB";
+  return "ALB";
+}
+
 /** Pull the `Name` tag, falling back to the identifier's tail. */
 function tagName(props: Props, fallback: string): string {
   for (const tag of arr(props, "Tags")) {
@@ -157,10 +309,6 @@ function tagName(props: Props, fallback: string): string {
 function tail(value: string): string {
   const parts = value.split(/[/:]/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : value;
-}
-
-function shorten(value: string, max = 34): string {
-  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
 /** Index resources by type for repeated lookup. */
@@ -200,10 +348,15 @@ export function buildGraph(
   const nodeIds = new Set<string>();
   const linkIds = new Set<string>();
 
-  const addNode = (node: GraphNode): void => {
+  /**
+   * Add a node, deriving its tags from the resource it came from. Nodes this
+   * renderer invents rather than discovers pass no properties and end up
+   * untagged.
+   */
+  const addNode = (node: Omit<GraphNode, "tags">, props?: Props): void => {
     if (nodeIds.has(node.id)) return;
     nodeIds.add(node.id);
-    nodes.push(node);
+    nodes.push({ ...node, tags: props ? collectTags(props) : {} });
   };
 
   // Links whose endpoints are created later in the build; flushed once every
@@ -339,18 +492,22 @@ export function buildGraph(
 
   addNode({
     id: INTERNET_ID,
+    kind: "External",
     label: "INTERNET",
     sub: "0.0.0.0/0",
     category: "external",
     group: EXTERNAL_GROUP,
+    alwaysVisible: true,
     detail: [["Scope", "Public internet"], ["CIDR", "0.0.0.0/0"]],
   });
   addNode({
     id: AWS_SERVICES_ID,
+    kind: "External",
     label: "AWS SERVICES",
     sub: "via PrivateLink",
     category: "external",
     group: EXTERNAL_GROUP,
+    alwaysVisible: true,
     detail: [["Scope", "AWS service endpoints"], ["Path", "Private, no IGW"]],
   });
 
@@ -368,6 +525,7 @@ export function buildGraph(
     const vpcId = igwVpc.get(igwId);
     addNode({
       id: `igw:${igwId}`,
+      kind: "Internet gateway",
       label: tagName(igw.properties, igwId),
       sub: igwId,
       category: "gateway",
@@ -378,7 +536,7 @@ export function buildGraph(
         ["Gateway", igwId],
         ["VPC", vpcId ?? "unattached"],
       ],
-    });
+    }, igw.properties);
     addLink(INTERNET_ID, `igw:${igwId}`, "ingress", "public", "inbound");
     addLink(`igw:${igwId}`, INTERNET_ID, "egress-igw", "public", "outbound");
   }
@@ -392,6 +550,7 @@ export function buildGraph(
     if (subnetId) natSubnet.set(natId, subnetId);
     addNode({
       id: `nat:${natId}`,
+      kind: "NAT gateway",
       label: tagName(nat.properties, natId),
       sub: str(nat.properties, "PrivateIpAddress") ?? natId,
       category: "nat",
@@ -403,7 +562,7 @@ export function buildGraph(
         ["Connectivity", str(nat.properties, "ConnectivityType") ?? "public"],
         ["Subnet", subnetId ?? "—"],
       ],
-    });
+    }, nat.properties);
     // A NAT's own egress leaves through its VPC's internet gateway.
     if (vpcId) {
       for (const [igwId, attachedVpc] of igwVpc) {
@@ -427,7 +586,8 @@ export function buildGraph(
     const subnetIds = strings(endpoint.properties, "SubnetIds");
     addNode({
       id: `vpce:${endpointId}`,
-      label: shorten(tail(service) || endpointId),
+      kind: "VPC endpoint",
+      label: tail(service) || endpointId,
       sub: str(endpoint.properties, "VpcEndpointType") ?? "Interface",
       category: "endpoint",
       group: placement(subnetIds[0], vpcId),
@@ -439,7 +599,7 @@ export function buildGraph(
         ["Mode", str(endpoint.properties, "VpcEndpointType") ?? "Interface"],
         ["Subnets", subnetIds.length ? subnetIds.join(", ") : "gateway type"],
       ],
-    });
+    }, endpoint.properties);
     addLink(
       `vpce:${endpointId}`,
       AWS_SERVICES_ID,
@@ -455,6 +615,7 @@ export function buildGraph(
     const peerVpcId = str(peering.properties, "PeerVpcId");
     addNode({
       id: `pcx:${pcxId}`,
+      kind: "VPC peering",
       label: tagName(peering.properties, pcxId),
       sub: peerVpcId ?? pcxId,
       category: "peering",
@@ -467,35 +628,39 @@ export function buildGraph(
         ["Peer VPC", peerVpcId ?? "—"],
         ["Peer region", str(peering.properties, "PeerRegion") ?? region],
       ],
-    });
+    }, peering.properties);
   }
 
   for (const tgw of get("AWS::EC2::TransitGateway")) {
     const tgwId = tgw.identifier;
     addNode({
       id: `tgw:${tgwId}`,
+      kind: "Transit gateway",
       label: tagName(tgw.properties, tgwId),
       sub: tgwId,
       category: "peering",
       group: UNPLACED_GROUP,
       detail: [["Type", "Transit gateway"], ["Gateway", tgwId]],
-    });
+    }, tgw.properties);
   }
 
   const hasVpn = get("AWS::EC2::VPNConnection").length > 0;
   if (hasVpn) {
     addNode({
       id: ONPREM_ID,
+      kind: "External",
       label: "ON-PREMISES",
       sub: "via VPN",
       category: "external",
       group: EXTERNAL_GROUP,
+      alwaysVisible: true,
       detail: [["Scope", "Customer network"]],
     });
     for (const vpn of get("AWS::EC2::VPNConnection")) {
       const vpnId = vpn.identifier;
       addNode({
         id: `vpn:${vpnId}`,
+        kind: "VPN connection",
         label: tagName(vpn.properties, vpnId),
         sub: vpnId,
         category: "peering",
@@ -505,7 +670,7 @@ export function buildGraph(
           ["Connection", vpnId],
           ["Customer gateway", str(vpn.properties, "CustomerGatewayId") ?? "—"],
         ],
-      });
+      }, vpn.properties);
       addLink(`vpn:${vpnId}`, ONPREM_ID, "transit", "private", "ipsec");
     }
   }
@@ -527,7 +692,8 @@ export function buildGraph(
     lbById.set(arn, { nodeId, vpc: vpcId });
     addNode({
       id: nodeId,
-      label: shorten(name),
+      kind: lbKind(str(lb.properties, "Type")),
+      label: name,
       sub: `${str(lb.properties, "Type") ?? "application"} · ${scheme}`,
       category: "balancer",
       group: placement(subnets[0], vpcId),
@@ -542,7 +708,7 @@ export function buildGraph(
         ["VPC", vpcId ?? "—"],
         ["Subnets", subnets.join(", ") || "—"],
       ],
-    });
+    }, lb.properties);
 
     // Internet-facing balancers are the estate's front door: draw the path in
     // from the VPC's internet gateway rather than from the internet directly,
@@ -570,7 +736,8 @@ export function buildGraph(
     const port = str(tg.properties, "Port") ?? "";
     addNode({
       id: nodeId,
-      label: shorten(name),
+      kind: "Target group",
+      label: name,
       sub: port ? `:${port}` : (str(tg.properties, "TargetType") ?? "target"),
       category: "targetgroup",
       group: placement(undefined, vpcId),
@@ -581,7 +748,7 @@ export function buildGraph(
         ["Port", port || "—"],
         ["Target type", str(tg.properties, "TargetType") ?? "—"],
       ],
-    });
+    }, tg.properties);
 
     // Bind the group to whatever it actually points at. Deferred because
     // instances, Lambdas and nested balancers are added further down, and
@@ -658,7 +825,8 @@ export function buildGraph(
     const state = obj(instance.properties, "State");
     addNode({
       id: `ec2:${instanceId}`,
-      label: shorten(tagName(instance.properties, instanceId)),
+      kind: "EC2 instance",
+      label: tagName(instance.properties, instanceId),
       sub: str(instance.properties, "PrivateIp") ??
         str(instance.properties, "PrivateIpAddress") ?? instanceId,
       category: "instance",
@@ -673,7 +841,7 @@ export function buildGraph(
         ["Private IP", str(instance.properties, "PrivateIp") ?? "—"],
         ["Subnet", subnetId ?? "—"],
       ],
-    });
+    }, instance.properties);
   }
 
   for (const asg of get("AWS::AutoScaling::AutoScalingGroup")) {
@@ -687,7 +855,8 @@ export function buildGraph(
     const nodeId = `asg:${asgName}`;
     addNode({
       id: nodeId,
-      label: shorten(asgName),
+      kind: "Auto scaling group",
+      label: asgName,
       sub: `${str(asg.properties, "DesiredCapacity") ?? "?"} desired`,
       category: "asg",
       group: placement(subnetIds[0], vpcId),
@@ -705,7 +874,7 @@ export function buildGraph(
         ],
         ["Subnets", subnetIds.join(", ") || "—"],
       ],
-    });
+    }, asg.properties);
     for (const tgArn of strings(asg.properties, "TargetGroupARNs")) {
       const tgNode = targetGroupNode.get(tgArn);
       if (tgNode) addLink(tgNode, nodeId, "forward", "private", "scales");
@@ -721,12 +890,13 @@ export function buildGraph(
     ecsClusterNode.set(name, nodeId);
     addNode({
       id: nodeId,
-      label: shorten(name),
+      kind: "ECS cluster",
+      label: name,
       sub: "ecs cluster",
       category: "ecs",
       group: UNPLACED_GROUP,
       detail: [["Type", "ECS cluster"], ["Name", name]],
-    });
+    }, cluster.properties);
   }
 
   for (const service of get("AWS::ECS::Service")) {
@@ -740,7 +910,8 @@ export function buildGraph(
     const nodeId = `ecssvc:${service.identifier}`;
     addNode({
       id: nodeId,
-      label: shorten(name),
+      kind: "ECS service",
+      label: name,
       sub: `${str(service.properties, "DesiredCount") ?? "?"} tasks`,
       category: "ecs",
       group: placement(subnetIds[0], vpcId),
@@ -756,7 +927,7 @@ export function buildGraph(
         ],
         ["Subnets", subnetIds.join(", ") || "—"],
       ],
-    });
+    }, service.properties);
 
     const clusterNode = ecsClusterNode.get(tail(clusterRef));
     if (clusterNode) addLink(clusterNode, nodeId, "member", "private", "runs");
@@ -778,7 +949,8 @@ export function buildGraph(
     const vpcId = subnetIds.length ? subnetVpc.get(subnetIds[0]) : undefined;
     addNode({
       id: `eks:${name}`,
-      label: shorten(name),
+      kind: "EKS cluster",
+      label: name,
       sub: `eks ${str(cluster.properties, "Version") ?? ""}`.trim(),
       category: "eks",
       group: placement(subnetIds[0], vpcId),
@@ -790,7 +962,7 @@ export function buildGraph(
         ["Endpoint", str(cluster.properties, "Endpoint") ?? "—"],
         ["Subnets", subnetIds.join(", ") || "—"],
       ],
-    });
+    }, cluster.properties);
   }
 
   for (const nodegroup of get("AWS::EKS::Nodegroup")) {
@@ -802,7 +974,8 @@ export function buildGraph(
     const nodeId = `eksng:${nodegroup.identifier}`;
     addNode({
       id: nodeId,
-      label: shorten(name),
+      kind: "EKS node group",
+      label: name,
       sub: "node group",
       category: "eks",
       group: placement(subnetIds[0], vpcId),
@@ -813,7 +986,7 @@ export function buildGraph(
         ["Cluster", clusterName],
         ["Subnets", subnetIds.join(", ") || "—"],
       ],
-    });
+    }, nodegroup.properties);
     if (clusterName) {
       addLink(`eks:${clusterName}`, nodeId, "member", "private", "nodes");
     }
@@ -826,7 +999,8 @@ export function buildGraph(
     const vpcId = subnetIds.length ? subnetVpc.get(subnetIds[0]) : undefined;
     addNode({
       id: `lambda:${name}`,
-      label: shorten(name),
+      kind: "Lambda function",
+      label: name,
       sub: str(fn.properties, "Runtime") ?? "lambda",
       category: "lambda",
       group: placement(subnetIds[0], vpcId),
@@ -839,7 +1013,7 @@ export function buildGraph(
         ["VPC", vpcId ?? "none — public egress"],
         ["Subnets", subnetIds.join(", ") || "—"],
       ],
-    });
+    }, fn.properties);
   }
 
   // Every node now exists, so the load balancer target edges can be resolved.
@@ -987,5 +1161,6 @@ export function buildGraph(
     links,
     categories: CATEGORIES,
     pathTypes: PATH_TYPES,
+    tagFacets: buildTagFacets(nodes),
   };
 }

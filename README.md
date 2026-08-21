@@ -25,10 +25,36 @@ offline, so it can be attached to an email or dropped in Slack as-is.
   NAT gateway, directly out of a public subnet, across a VPC peering
   connection, or to an AWS service through a VPC endpoint.
 
+Each tile leads with what the object is — `EC2 INSTANCE`, `NLB`, `VPC ENDPOINT`
+— and carries its name underneath, truncated to fit. The full name and every
+other property live in the inspect pane, one click away.
+
 Interactions: drag nodes, scroll to zoom, click any object to pin it and see
-every path in and out, and use the left rail to filter by object category, path
-type or boundary. Amber dashes are traffic that crosses the internet; cyan dots
-stay inside AWS. Particles animate along each path in the direction of travel.
+every path in and out. Amber dashes are traffic that crosses the internet; cyan
+dots stay inside AWS. Particles animate along each path in the direction of
+travel.
+
+### Filtering
+
+The left rail has two tabs.
+
+- **Objects** — object category, path type and boundary, as before.
+- **Tags** — the estate sliced by its own tags. Keys are ranked by how useful
+  they are to filter on, so `Environment` and `Service` surface above the rest,
+  and keys that never repeat a value (`Name`, CloudFormation logical ids) are
+  left out because they can only ever match one object. Values are OR-ed within
+  a key and AND-ed across keys, so `Environment=production` plus
+  `Service=checkout` gives you exactly that service in that environment.
+
+Objects carrying no such tag are hidden by that filter but can be added back
+with the `(no <key> tag)` option — useful for finding what your tagging misses.
+The internet, PrivateLink and on-premises actors are always drawn, so a filtered
+view still shows how traffic reaches the slice. Boundaries left empty stop being
+drawn, the view zooms to what is left, and the header records the active slice
+so a screenshot says what it shows.
+
+The tags on a pinned object double as controls: click one to filter the whole
+diagram to everything sharing it.
 
 ## How it is built
 
@@ -154,6 +180,6 @@ MIT — see LICENSE.txt for details.
 
 ```bash
 swamp workflow history get '@aaronge/aws-disco/diagram' --json
-swamp data get aws-diagram summary --json      # counts, stale domains, warnings
+swamp data get aws-diagram summary --json      # counts, tag coverage, stale domains, warnings
 swamp data get aws-network inventory --json    # raw discovery output
 ```

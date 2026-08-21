@@ -68,6 +68,8 @@ const SummarySchema = z.object({
   privatePathCount: z.number(),
   categories: z.record(z.string(), z.number()),
   pathTypes: z.record(z.string(), z.number()),
+  tagKeys: z.record(z.string(), z.number()),
+  untaggedNodeCount: z.number(),
   publishedPath: z.string(),
   d3Embedded: z.boolean(),
   freshDomainCount: z.number(),
@@ -122,7 +124,19 @@ interface RenderContext {
 /** Model that turns AWS discovery output into a shareable diagram. */
 export const model = {
   type: "@aaronge/aws-architecture-diagram",
-  version: "2026.08.10.1",
+  version: "2026.08.21.1",
+  // The tag filter changed what the renderer emits, not what it is configured
+  // with: `summary` gained tag coverage fields, while the global arguments are
+  // untouched. Existing instances still need the entry to move their
+  // typeVersion forward, so it carries the attributes across unchanged.
+  upgrades: [
+    {
+      toVersion: "2026.08.21.1",
+      description:
+        "Tag filtering and relabelled tiles; no global argument changes",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     "summary": {
@@ -239,6 +253,18 @@ export const model = {
           pathTypes[link.pathType] = (pathTypes[link.pathType] ?? 0) + 1;
         }
 
+        // Tag coverage travels with the summary so an untagged estate is
+        // visible from `swamp data get` — the diagram's tag filter is only as
+        // good as the tagging behind it.
+        const tagKeys: Record<string, number> = {};
+        for (const facet of graph.tagFacets) {
+          tagKeys[facet.key] = facet.taggedCount;
+        }
+        const untaggedNodeCount =
+          graph.nodes.filter((node) =>
+            !node.alwaysVisible && Object.keys(node.tags).length === 0
+          ).length;
+
         const summaryHandle = await context.writeResource(
           "summary",
           "summary",
@@ -257,6 +283,8 @@ export const model = {
               graph.links.filter((link) => link.scope === "private").length,
             categories,
             pathTypes,
+            tagKeys,
+            untaggedNodeCount,
             publishedPath,
             d3Embedded: Boolean(inline),
             freshDomainCount,

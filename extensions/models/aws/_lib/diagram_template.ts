@@ -123,6 +123,55 @@ h1 {
 }
 .check .count { margin-left: auto; color: var(--dimmer); font-size: 10px; }
 .check.off { color: var(--dimmer); }
+.check .val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check.untagged .val { font-style: italic; }
+
+.tabs { display: flex; border-bottom: 1px solid var(--edge); flex: none; }
+.tab {
+  flex: 1; padding: 6px 0; cursor: pointer; background: transparent;
+  border: 0; border-bottom: 1px solid transparent; color: var(--dimmer);
+  font: inherit; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.tab:hover { color: var(--ink); }
+.tab.on { color: var(--green); border-bottom-color: var(--green); }
+.tab .badge {
+  display: none; margin-left: 5px; padding: 0 4px;
+  background: var(--green); color: #04070a; font-size: 9px;
+}
+.tab .badge.show { display: inline-block; }
+
+.tagsearch {
+  width: 100%; margin-bottom: 8px; padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.35); border: 1px solid var(--edge);
+  color: var(--ink); font: inherit; font-size: 10.5px;
+}
+.tagsearch::placeholder { color: var(--dimmer); }
+.tagsearch:focus { outline: none; border-color: var(--green); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.chip {
+  border: 1px solid var(--edge); padding: 1px 5px; font-size: 9.5px;
+  color: var(--dim); cursor: pointer; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.chip:hover { border-color: var(--green); color: var(--green); }
+.chip.active { border-color: var(--green); color: var(--green); }
+.chip.active::after { content: " ✕"; color: var(--dimmer); }
+.chip.inert { cursor: default; color: var(--dimmer); }
+.chip.inert:hover { border-color: var(--edge); color: var(--dimmer); }
+
+.tagkey {
+  display: flex; align-items: center; gap: 6px; margin: 12px 0 5px;
+  cursor: pointer; font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--dim);
+}
+.tagkey:first-child { margin-top: 0; }
+.tagkey:hover { color: var(--ink); }
+.tagkey.active { color: var(--green); }
+.tagkey .caret { color: var(--dimmer); font-size: 9px; }
+.tagkey .n { margin-left: auto; color: var(--dimmer); letter-spacing: 0.06em; }
+.more { color: var(--dimmer); font-size: 10px; cursor: pointer; padding: 3px 0 0 16px; }
+.more:hover { color: var(--green); }
 
 #canvas { flex: 1; min-height: 0; }
 svg { display: block; width: 100%; height: 100%; cursor: grab; }
@@ -155,18 +204,25 @@ svg.dragging { cursor: grabbing; }
   transition: filter 0.2s;
 }
 .node text { pointer-events: none; }
+.node .nkind {
+  font-size: 8px; font-weight: 700; letter-spacing: 0.08em;
+  fill: currentColor;
+}
 .node .nlabel { font-size: 9.5px; fill: #e6fff4; }
-.node .nsub { font-size: 8px; fill: var(--dim); }
 .node.faded { opacity: 0.14; }
 .node.hot rect { filter: drop-shadow(0 0 7px currentColor); }
 .node.pinned rect { stroke-width: 2; filter: drop-shadow(0 0 11px currentColor); }
 
 .inspect-empty { color: var(--dimmer); font-size: 10.5px; letter-spacing: 0.08em; }
-.inspect h2 { margin: 0 0 2px; font-size: 15px; color: #eafff5; letter-spacing: 0.03em; font-weight: 600; }
+.inspect h2 {
+  margin: 0 0 2px; font-size: 15px; color: #eafff5; letter-spacing: 0.03em;
+  font-weight: 600; overflow-wrap: anywhere;
+}
 .inspect .kind {
   font-size: 9.5px; letter-spacing: 0.15em; text-transform: uppercase;
   margin-bottom: 11px;
 }
+.inspect .kindsub { color: var(--dimmer); }
 .kv { display: grid; grid-template-columns: 74px 1fr; gap: 3px 8px; margin-bottom: 12px; }
 .kv dt {
   font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase;
@@ -180,6 +236,7 @@ svg.dragging { cursor: grabbing; }
 .path-item {
   display: flex; gap: 6px; align-items: baseline; padding: 2px 0;
   font-size: 10px; color: var(--dim); cursor: pointer;
+  overflow-wrap: anywhere;
 }
 .path-item:hover { color: var(--ink); }
 .path-item .dir { color: var(--green); }
@@ -214,10 +271,23 @@ const G = window.__TOPOLOGY__;
 const colourOf = {};
 G.categories.forEach(function (c) { colourOf[c.key] = c.colour; });
 
+// Sentinel value standing for "this object carries no such tag". Filtering on a
+// tag would otherwise silently drop untagged infrastructure with no way to ask
+// for it back.
+const UNTAGGED = "\u2400untagged";
+const TAG_VALUE_LIMIT = 18;
+const facets = G.tagFacets || [];
+const facetKeys = new Set(facets.map(function (f) { return f.key; }));
+
 const state = {
   categories: new Set(G.categories.map(function (c) { return c.key; })),
   paths: new Set(G.pathTypes.map(function (p) { return p.key; })),
   boundaries: new Set(["vpc", "subnet", "external"]),
+  // Tag key -> Set of accepted values. A key that is absent, or holds an empty
+  // set, imposes no constraint: values are OR-ed within a key, AND-ed across.
+  // A Map, not an object: AWS accepts "__proto__" and "constructor" as tag
+  // keys, and a plain object would mangle both.
+  tags: new Map(),
   pinned: null,
 };
 
@@ -227,7 +297,17 @@ const state = {
 // from colliding. A purely force-directed layout would reshuffle on every run
 // and make two Mondays impossible to compare.
 
-const NODE_W = 116, NODE_H = 30, PAD = 13, HEADER = 22, GAP = 16;
+const NODE_W = 142, NODE_H = 34, PAD = 13, HEADER = 22, GAP = 16;
+
+// Labels are clamped to the box they sit in rather than allowed to run over the
+// canvas. The font stack is monospace throughout, so a character's advance is a
+// fixed fraction of its size — enough to size a label without measuring it.
+function clampText(text, widthPx, charPx) {
+  const value = String(text === undefined || text === null ? "" : text);
+  const max = Math.floor(widthPx / charPx);
+  if (max < 2) return "";
+  return value.length <= max ? value : value.slice(0, max - 1) + "…";
+}
 
 const nodesByGroup = new Map();
 G.nodes.forEach(function (n) {
@@ -334,6 +414,14 @@ const extentH = Math.max.apply(null, boxes.map(function (b) { return b.y + b.h; 
 // ---- render ------------------------------------------------------------
 
 const svg = d3.select("#canvas").append("svg");
+
+// One shared clip, applied inside each tile's own translated space: a belt to
+// clampText's braces, so an unexpected font can't spill a label over the canvas.
+svg.append("defs").append("clipPath").attr("id", "tileclip")
+  .append("rect")
+  .attr("x", -NODE_W / 2 + 3).attr("y", -NODE_H / 2)
+  .attr("width", NODE_W - 6).attr("height", NODE_H);
+
 const root = svg.append("g");
 const layerBox = root.append("g");
 const layerLink = root.append("g");
@@ -356,11 +444,13 @@ boxSel.append("rect")
 boxSel.append("text").attr("class", "boundary-label")
   .attr("x", function (d) { return d.x + PAD; })
   .attr("y", function (d) { return d.y + 14; })
-  .text(function (d) { return d.group.label; });
+  .text(function (d) {
+    return clampText(d.group.label, d.w - PAD * 2, 7.05);
+  });
 boxSel.append("text").attr("class", "boundary-sub")
   .attr("x", function (d) { return d.x + PAD; })
   .attr("y", function (d) { return d.y + 24; })
-  .text(function (d) { return d.group.sub; });
+  .text(function (d) { return clampText(d.group.sub, d.w - PAD * 2, 5.15); });
 
 const nodeById = new Map();
 G.nodes.forEach(function (n) {
@@ -398,10 +488,21 @@ nodeSel.append("rect")
   .attr("x", -NODE_W / 2).attr("y", -NODE_H / 2)
   .attr("width", NODE_W).attr("height", NODE_H)
   .attr("stroke", function (d) { return colourOf[d.category] || "#8b949e"; });
+
+// A tile says what the thing is, then what it is called. The full name — and
+// everything else about it — belongs in the inspect pane, so the tile can
+// truncate without losing anything.
+const TILE_TEXT_W = NODE_W - 14;
+nodeSel.append("text").attr("class", "nkind")
+  .attr("x", -NODE_W / 2 + 7).attr("y", -3)
+  .attr("clip-path", "url(#tileclip)")
+  .text(function (d) {
+    return clampText((d.kind || "").toUpperCase(), TILE_TEXT_W, 5.5);
+  });
 nodeSel.append("text").attr("class", "nlabel")
-  .attr("x", -NODE_W / 2 + 7).attr("y", -1).text(function (d) { return d.label; });
-nodeSel.append("text").attr("class", "nsub")
-  .attr("x", -NODE_W / 2 + 7).attr("y", 10).text(function (d) { return d.sub; });
+  .attr("x", -NODE_W / 2 + 7).attr("y", 9)
+  .attr("clip-path", "url(#tileclip)")
+  .text(function (d) { return clampText(d.label, TILE_TEXT_W, 5.75); });
 
 nodeSel.call(d3.drag()
   .on("start", function (event, d) {
@@ -482,9 +583,63 @@ function animate() {
 
 // ---- filtering and selection -------------------------------------------
 
-function isNodeVisible(n) { return state.categories.has(n.category); }
+function activeTagKeys() {
+  const keys = [];
+  state.tags.forEach(function (values, key) {
+    if (values && values.size) keys.push(key);
+  });
+  return keys;
+}
+
+/** Own-property lookup, so an inherited member can't masquerade as a tag. */
+function tagValue(node, key) {
+  const tags = node.tags;
+  if (!tags || !Object.prototype.hasOwnProperty.call(tags, key)) return undefined;
+  const value = tags[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function activeTagPairs() {
+  const pairs = [];
+  activeTagKeys().forEach(function (key) {
+    state.tags.get(key).forEach(function (value) { pairs.push([key, value]); });
+  });
+  return pairs;
+}
+
+function matchesTags(n) {
+  const keys = activeTagKeys();
+  if (!keys.length) return true;
+  // The internet, PrivateLink and on-premises actors are drawn rather than
+  // discovered; keeping them means a filtered view still shows how traffic
+  // reaches the slice you asked for.
+  if (n.alwaysVisible) return true;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const value = tagValue(n, key);
+    const wanted = value === undefined ? UNTAGGED : value;
+    if (!state.tags.get(key).has(wanted)) return false;
+  }
+  return true;
+}
+
+function isNodeVisible(n) {
+  return state.categories.has(n.category) && matchesTags(n);
+}
 function isLinkVisible(l) {
   return state.paths.has(l.pathType) && isNodeVisible(l.source) && isNodeVisible(l.target);
+}
+
+// A boundary with nothing left inside it is just an empty box taking up room —
+// the whole point of filtering is to shrink the picture, so drop it.
+function boxHasContent(box) {
+  for (let i = 0; i < box.own.length; i++) {
+    if (isNodeVisible(box.own[i])) return true;
+  }
+  for (let j = 0; j < box.kids.length; j++) {
+    if (boxHasContent(box.kids[j])) return true;
+  }
+  return false;
 }
 
 function apply() {
@@ -513,13 +668,33 @@ function apply() {
     .classed("hot", function (d) { return !!d.__hot; });
 
   boxSel.style("display", function (d) {
-    return state.boundaries.has(d.group.kind) ? null : "none";
+    return state.boundaries.has(d.group.kind) && boxHasContent(d) ? null : "none";
   });
 
   const vn = G.nodes.filter(isNodeVisible).length;
   const vl = links.filter(isLinkVisible).length;
   document.getElementById("stat-objects").textContent = vn;
   document.getElementById("stat-paths").textContent = vl;
+
+  const pairs = activeTagPairs();
+  const scope = document.getElementById("scope-label");
+  if (scope) {
+    scope.textContent = pairs.length
+      ? pairs.slice(0, 3).map(function (p) {
+        return (p[0] + "=" + (p[1] === UNTAGGED ? "untagged" : p[1])).toUpperCase();
+      }).join(" + ") + (pairs.length > 3 ? " +" + (pairs.length - 3) + " MORE" : "")
+      : "FULL TOPOLOGY";
+  }
+  const badge = document.getElementById("tag-badge");
+  if (badge) {
+    badge.textContent = pairs.length;
+    badge.classList.toggle("show", pairs.length > 0);
+  }
+  const total = document.getElementById("stat-total");
+  if (total) {
+    total.style.display = vn < G.nodes.length ? null : "none";
+    total.textContent = "of " + G.nodes.length;
+  }
 }
 
 function pin(node) {
@@ -542,13 +717,41 @@ function renderInspect(node) {
   }
   const cat = G.categories.find(function (c) { return c.key === node.category; });
   const colour = colourOf[node.category] || "#8b949e";
-  let html = '<div class="inspect"><h2>' + esc(node.label) + '</h2>' +
+  // The tile truncates; this pane is where the whole name lives.
+  let html = '<div class="inspect"><h2>' + esc(node.label) + "</h2>" +
     '<div class="kind" style="color:' + colour + '">' +
-    esc(cat ? cat.label : node.category) + "</div><dl class=\"kv\">";
+    esc(node.kind || (cat ? cat.label : node.category)) +
+    (node.sub ? ' <span class="kindsub">· ' + esc(node.sub) + "</span>" : "") +
+    "</div><dl class=\"kv\">";
   node.detail.forEach(function (row) {
     html += "<dt>" + esc(row[0]) + "</dt><dd>" + esc(row[1]) + "</dd>";
   });
   html += "</dl>";
+
+  // Tags double as filter controls: clicking one narrows the whole diagram to
+  // everything sharing it, which is the fastest route from "what is this?" to
+  // "show me the rest of this service".
+  const nodeTags = node.tags || {};
+  const tagKeys = Object.keys(nodeTags).sort();
+  if (tagKeys.length) {
+    html += '<div class="paths-title">Tags (' + tagKeys.length +
+      ") — click to filter</div><div class=\"chips\">";
+    tagKeys.forEach(function (key) {
+      // Keys the rail doesn't offer — Name and friends — are shown but inert:
+      // filtering on one leaves a single object and no way to see why.
+      if (!facetKeys.has(key)) {
+        html += '<div class="chip inert">' + esc(key) + "=" +
+          esc(nodeTags[key]) + "</div>";
+        return;
+      }
+      const chosen = state.tags.get(key);
+      const on = !!(chosen && chosen.has(nodeTags[key]));
+      html += '<div class="chip' + (on ? " active" : "") + '" data-tagkey="' +
+        esc(key) + '" data-tagval="' + esc(nodeTags[key]) + '">' +
+        esc(key) + "=" + esc(nodeTags[key]) + "</div>";
+    });
+    html += "</div>";
+  }
 
   const edges = (adjacency.get(node.id) || []).filter(function (a) {
     return isLinkVisible(a.link);
@@ -571,6 +774,13 @@ function renderInspect(node) {
     el.addEventListener("click", function () {
       const target = nodeById.get(el.getAttribute("data-goto"));
       if (target) { pin(target); focusOn(target); }
+    });
+  });
+
+  host.querySelectorAll("[data-tagkey]").forEach(function (el) {
+    el.addEventListener("click", function () {
+      showTab("tags");
+      toggleTag(el.getAttribute("data-tagkey"), el.getAttribute("data-tagval"));
     });
   });
 }
@@ -681,6 +891,227 @@ function buildRail() {
   }
 }
 
+// ---- tag rail -----------------------------------------------------------
+// A whole-region diagram is only digestible once you can cut it to one
+// environment or one service, so tags get their own tab: keys ranked by how
+// useful they are to slice on, values offered as facets with counts.
+
+const tagOpen = new Map();
+const tagExpanded = new Set();
+let tagQuery = "";
+
+// How many objects lack each key entirely — offered as "(no X tag)" so
+// filtering never hides infrastructure with no way to ask for it back.
+const untaggedCounts = new Map();
+facets.forEach(function (f) {
+  let missing = 0;
+  G.nodes.forEach(function (n) {
+    if (n.alwaysVisible) return;
+    if (tagValue(n, f.key) === undefined) missing++;
+  });
+  untaggedCounts.set(f.key, missing);
+});
+
+function toggleTag(key, value) {
+  if (!key || value === null || value === undefined) return;
+  let chosen = state.tags.get(key);
+  if (!chosen) { chosen = new Set(); state.tags.set(key, chosen); }
+  if (chosen.has(value)) chosen.delete(value);
+  else { chosen.add(value); tagOpen.set(key, true); }
+  if (!chosen.size) state.tags.delete(key);
+  afterTagChange();
+}
+
+function afterTagChange() {
+  renderTagList();
+  apply();
+  seedParticles();
+  // A pinned object can fall outside the new slice; leaving it pinned would
+  // keep the rest of the diagram faded against something no longer drawn.
+  if (state.pinned) {
+    const node = nodeById.get(state.pinned);
+    if (!node || !isNodeVisible(node)) {
+      state.pinned = null;
+      apply();
+      renderInspect(null);
+    } else {
+      renderInspect(node);
+    }
+  }
+  fitVisible(true);
+}
+
+function tagCheck(key, value, label, count, on, extra) {
+  return '<div class="check ' + (on ? "on" : "off") + (extra || "") +
+    '" data-tagkey="' + esc(key) + '" data-tagval="' + esc(value) + '">' +
+    '<span class="box"></span><span class="val">' + esc(label) + "</span>" +
+    '<span class="count">' + count + "</span></div>";
+}
+
+function renderActiveChips() {
+  const host = document.getElementById("tagactive");
+  if (!host) return;
+  const pairs = activeTagPairs();
+  if (!pairs.length) { host.innerHTML = ""; return; }
+  host.innerHTML = '<div class="chips">' + pairs.map(function (p) {
+    return '<div class="chip active" data-tagkey="' + esc(p[0]) +
+      '" data-tagval="' + esc(p[1]) + '">' + esc(p[0]) + "=" +
+      esc(p[1] === UNTAGGED ? "untagged" : p[1]) + "</div>";
+  }).join("") + "</div>";
+  bindTagToggles(host);
+}
+
+function bindTagToggles(host) {
+  host.querySelectorAll("[data-tagkey]").forEach(function (el) {
+    el.addEventListener("click", function () {
+      toggleTag(el.getAttribute("data-tagkey"), el.getAttribute("data-tagval"));
+    });
+  });
+}
+
+function renderTagList() {
+  const list = document.getElementById("taglist");
+  if (!list) return;
+
+  let html = "";
+  let shown = 0;
+  facets.forEach(function (f) {
+    const keyMatches = !tagQuery || f.key.toLowerCase().indexOf(tagQuery) !== -1;
+    const values = f.values.filter(function (v) {
+      return keyMatches || v.value.toLowerCase().indexOf(tagQuery) !== -1;
+    });
+    if (!values.length) return;
+    shown++;
+
+    const chosen = state.tags.get(f.key);
+    const active = !!(chosen && chosen.size);
+    const open = !!tagOpen.get(f.key) || (tagQuery !== "");
+    html += '<div class="tagkey' + (active ? " active" : "") +
+      '" data-tagsection="' + esc(f.key) + '">' +
+      '<span class="caret">' + (open ? "▾" : "▸") + "</span><span>" +
+      esc(f.key) + '</span><span class="n">' +
+      (active ? chosen.size + " / " : "") + f.values.length + "</span></div>";
+    if (!open) return;
+
+    const limit = tagExpanded.has(f.key)
+      ? values.length
+      : Math.min(values.length, TAG_VALUE_LIMIT);
+    for (let i = 0; i < limit; i++) {
+      const v = values[i];
+      html += tagCheck(
+        f.key, v.value, v.value, v.count, !!(chosen && chosen.has(v.value)), "",
+      );
+    }
+    if (limit < values.length) {
+      html += '<div class="more" data-tagmore="' + esc(f.key) + '">+ ' +
+        (values.length - limit) + " more</div>";
+    }
+    if (untaggedCounts.get(f.key) && keyMatches) {
+      html += tagCheck(
+        f.key, UNTAGGED, "(no " + f.key + " tag)", untaggedCounts.get(f.key),
+        !!(chosen && chosen.has(UNTAGGED)), " untagged",
+      );
+    }
+  });
+
+  list.innerHTML = shown
+    ? html
+    : '<div class="inspect-empty">Nothing matches that search.</div>';
+
+  list.querySelectorAll("[data-tagsection]").forEach(function (el) {
+    el.addEventListener("click", function () {
+      const key = el.getAttribute("data-tagsection");
+      tagOpen.set(key, !tagOpen.get(key));
+      renderTagList();
+    });
+  });
+  list.querySelectorAll("[data-tagmore]").forEach(function (el) {
+    el.addEventListener("click", function () {
+      tagExpanded.add(el.getAttribute("data-tagmore"));
+      renderTagList();
+    });
+  });
+  bindTagToggles(list);
+  renderActiveChips();
+}
+
+function mountTagRail() {
+  const host = document.getElementById("tagfilters");
+  if (!facets.length) {
+    host.innerHTML = '<div class="inspect-empty">No tags were found on the ' +
+      "discovered resources. Tag them with something like Environment or " +
+      "Service and the next run will let you slice the diagram by it.</div>";
+    return;
+  }
+
+  host.innerHTML =
+    '<input class="tagsearch" id="tagsearch" placeholder="search keys and values">' +
+    '<div class="btnrow"><button class="btn" data-tagclear="1">Clear</button>' +
+    '<button class="btn" data-tagfit="1">Fit view</button></div>' +
+    '<div id="tagactive"></div><div id="taglist"></div>';
+
+  const search = document.getElementById("tagsearch");
+  search.addEventListener("input", function () {
+    tagQuery = search.value.trim().toLowerCase();
+    renderTagList();
+  });
+  host.querySelector("[data-tagclear]").addEventListener("click", function () {
+    state.tags = new Map();
+    afterTagChange();
+  });
+  host.querySelector("[data-tagfit]").addEventListener("click", function () {
+    fitVisible(true);
+  });
+
+  // The first couple of keys are the ones worth slicing on; the rest stay
+  // folded so a busy tagging convention doesn't bury them.
+  facets.forEach(function (f, i) { tagOpen.set(f.key, i < 2); });
+  renderTagList();
+}
+
+function showTab(name) {
+  document.querySelectorAll("[data-tab]").forEach(function (el) {
+    el.classList.toggle("on", el.getAttribute("data-tab") === name);
+  });
+  document.getElementById("filters").hidden = name !== "objects";
+  document.getElementById("tagfilters").hidden = name !== "tags";
+}
+
+function bindTabs() {
+  document.querySelectorAll("[data-tab]").forEach(function (el) {
+    el.addEventListener("click", function () {
+      showTab(el.getAttribute("data-tab"));
+    });
+  });
+}
+
+/** Zoom to what is actually on screen, so a filtered view fills the canvas. */
+function fitVisible(animated) {
+  const box = svg.node().getBoundingClientRect();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  G.nodes.forEach(function (n) {
+    if (!isNodeVisible(n)) return;
+    if (n.x - NODE_W / 2 < minX) minX = n.x - NODE_W / 2;
+    if (n.y - NODE_H / 2 < minY) minY = n.y - NODE_H / 2;
+    if (n.x + NODE_W / 2 > maxX) maxX = n.x + NODE_W / 2;
+    if (n.y + NODE_H / 2 > maxY) maxY = n.y + NODE_H / 2;
+  });
+  if (minX === Infinity) { fit(); return; }
+
+  const pad = 44;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY);
+  const scale = Math.min(box.width / w, box.height / h, 1.6);
+  const transform = d3.zoomIdentity
+    .translate(
+      (box.width - w * scale) / 2 - minX * scale,
+      (box.height - h * scale) / 2 - minY * scale,
+    )
+    .scale(scale);
+  if (animated) svg.transition().duration(520).call(zoom.transform, transform);
+  else svg.call(zoom.transform, transform);
+}
+
 function fit() {
   const box = svg.node().getBoundingClientRect();
   const scale = Math.min(box.width / (extentW + 60), box.height / (extentH + 60), 1);
@@ -690,6 +1121,9 @@ function fit() {
 }
 
 buildRail();
+bindTabs();
+mountTagRail();
+showTab("objects");
 apply();
 seedParticles();
 renderInspect(null);
@@ -751,7 +1185,7 @@ export function renderDiagram(
   <div class="statusbar">
     <span>SWAMP // AWS ESTATE // ${
     escapeHtml(regionUpper)
-  } // FULL TOPOLOGY</span>
+  } // <span id="scope-label">FULL TOPOLOGY</span></span>
     <span class="live">GENERATED ${escapeHtml(generated)} UTC</span>
   </div>
   ${staleBanner}
@@ -773,7 +1207,12 @@ export function renderDiagram(
   <div class="workspace">
     <div class="pane">
       <div class="pane-title"><span class="n">01</span><span>Filter</span></div>
+      <div class="tabs">
+        <button class="tab on" data-tab="objects">Objects</button>
+        <button class="tab" data-tab="tags">Tags<span class="badge" id="tag-badge"></span></button>
+      </div>
       <div class="pane-body" id="filters"></div>
+      <div class="pane-body" id="tagfilters" hidden></div>
     </div>
     <div class="pane">
       <div class="pane-title">
@@ -789,7 +1228,8 @@ export function renderDiagram(
   </div>
 
   <div class="footer">
-    <span>objects <span class="k" id="stat-objects">0</span></span>
+    <span>objects <span class="k" id="stat-objects">0</span>
+      <span id="stat-total" style="display:none"></span></span>
     <span>paths <span class="k" id="stat-paths">0</span></span>
     <span>traffic flows toward target</span>
     <div class="legend">
@@ -815,7 +1255,11 @@ export function renderDiagram(
     directly from a public subnet. <span class="priv">Private</span> paths stay
     inside AWS — listener to target group to compute, and VPC endpoints reaching
     AWS services over PrivateLink without touching the internet. Egress lines are
-    read from real route table entries, not inferred. ${warningBlock}
+    read from real route table entries, not inferred.
+    The <b>Tags</b> filter cuts the picture down to one environment or service;
+    objects carrying no such tag can be added back with the "(no … tag)" option,
+    boundaries left empty stop being drawn, and the header above records whichever
+    slice is on screen so a screenshot says what it shows. ${warningBlock}
   </div>
 </div>
 
